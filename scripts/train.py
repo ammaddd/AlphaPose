@@ -2,7 +2,7 @@
 import json
 import os
 
-from comet_ml import Experiment
+from alphapose.utils.comet_utils import CometLogger
 from pandas.io.json._normalize import nested_to_record
 import numpy as np
 import torch
@@ -25,7 +25,7 @@ else:
     norm_layer = nn.BatchNorm2d
 
 
-def train(opt, train_loader, m, criterion, optimizer, writer, experiment):
+def train(opt, train_loader, m, criterion, optimizer, writer, comet_logger):
     loss_logger = DataLogger()
     acc_logger = DataLogger()
     m.train()
@@ -41,10 +41,10 @@ def train(opt, train_loader, m, criterion, optimizer, writer, experiment):
         labels = labels.cuda()
         label_masks = label_masks.cuda()
         if i % 100 == 0:
-            experiment.log_image(inps[0].detach().cpu().numpy(),
-                                 name='train_images',
-                                 image_channels="first",
-                                 step=((opt.epoch)*len(train_loader))+i)
+            comet_logger.log_image(inps[0].detach().cpu().numpy(),
+                                   name='train_images',
+                                   image_channels="first",
+                                   step=((opt.epoch)*len(train_loader))+i)
 
         output = m(inps)
 
@@ -62,13 +62,13 @@ def train(opt, train_loader, m, criterion, optimizer, writer, experiment):
 
         loss_logger.update(loss.item(), batch_size)
         acc_logger.update(acc, batch_size)
-        experiment.log_metric("train_loss", loss.item(),
-                              step=((opt.epoch)*len(train_loader))+i,
-                              epoch=opt.epoch)
-        experiment.log_metric("train_acc", acc,
-                              step=((opt.epoch)*len(train_loader))+i,
-                              epoch=opt.epoch)
-
+        comet_logger.log_metric("train_loss", loss.item(),
+                                step=((opt.epoch)*len(train_loader))+i,
+                                epoch=opt.epoch)
+        comet_logger.log_metric("train_acc", acc,
+                                step=((opt.epoch)*len(train_loader))+i,
+                                epoch=opt.epoch)
+  
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -187,15 +187,15 @@ def validate_gt(m, opt, cfg, heatmap_to_coord, batch_size=20):
 
 
 def main():
-    experiment = Experiment(auto_metric_logging=False)
+    comet_logger = CometLogger(opt.comet, auto_metric_logging=False)
     logger.info('******************************')
     logger.info(opt)
     logger.info('******************************')
     logger.info(cfg)
     logger.info('******************************')
     opt_dict = nested_to_record(vars(opt), sep='_')
-    experiment.log_others(opt_dict)
-    experiment.log_asset(opt.cfg, 'cfg.yaml')
+    comet_logger.log_others(opt_dict)
+    comet_logger.log_asset(opt.cfg, 'cfg.yaml')
 
     # Model Initialize
     m = preset_model(cfg)
@@ -228,7 +228,7 @@ def main():
         logger.info(f'############# Starting Epoch {opt.epoch} | LR: {current_lr} #############')
 
         # Training
-        loss, miou = train(opt, train_loader, m, criterion, optimizer, writer, experiment)
+        loss, miou = train(opt, train_loader, m, criterion, optimizer, writer, comet_logger)
         logger.epochInfo('Train', opt.epoch, loss, miou)
 
         lr_scheduler.step()
@@ -237,20 +237,20 @@ def main():
             # Save checkpoint
             ckpt_path = './exp/{}-{}/model_{}.pth'.format(opt.exp_id, cfg.FILE_NAME, opt.epoch)
             torch.save(m.module.state_dict(), ckpt_path)
-            experiment.log_model("alphapose", ckpt_path)
+            comet_logger.log_model("alphapose", ckpt_path)
             # Prediction Test
             with torch.no_grad():
                 gt_AP = validate_gt(m.module, opt, cfg, heatmap_to_coord)
                 rcnn_AP = validate(m.module, opt, heatmap_to_coord)
                 logger.info(f'##### Epoch {opt.epoch} | gt mAP: {gt_AP} | rcnn mAP: {rcnn_AP} #####')
-                experiment.log_metric("gt_mAP", gt_AP, epoch=opt.epoch)
-                experiment.log_metric("rcnn_AP", rcnn_AP, epoch=opt.epoch)
+                comet_logger.log_metric("gt_mAP", gt_AP, epoch=opt.epoch)
+                comet_logger.log_metric("rcnn_AP", rcnn_AP, epoch=opt.epoch)
 
         # Time to add DPG
         if i == cfg.TRAIN.DPG_MILESTONE:
             ckpt_path = './exp/{}-{}/final.pth'.format(opt.exp_id, cfg.FILE_NAME)
             torch.save(m.module.state_dict(), ckpt_path)
-            experiment.log_model("alphapose", ckpt_path)
+            comet_logger.log_model("alphapose", ckpt_path)
             # Adjust learning rate
             for param_group in optimizer.param_groups:
                 param_group['lr'] = cfg.TRAIN.LR
@@ -262,7 +262,7 @@ def main():
 
     ckpt_path = './exp/{}-{}/final_DPG.pth'.format(opt.exp_id, cfg.FILE_NAME)
     torch.save(m.module.state_dict(), ckpt_path)
-    experiment.log_model("alphapose", ckpt_path)
+    comet_logger.log_model("alphapose", ckpt_path)
 
 
 def preset_model(cfg):
