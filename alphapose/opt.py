@@ -49,6 +49,8 @@ parser.add_argument('--debug', default=False, dest='debug',
                     help='Visualization debug', action='store_true')
 parser.add_argument('--map', default=True, dest='map',
                     help='Evaluate mAP per epoch', action='store_true')
+parser.add_argument('--comet', default=False, type=bool,
+                    help='enable comet logging (if comet installed)')
 
 
 opt = parser.parse_args()
